@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Connection Portal</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 20px;
+            text-align: center;
+        }
+        input, button {
+            padding: 10px;
+            margin: 10px;
+            width: 80%;
+        }
+        .code {
+            font-size: 48px;
+            font-weight: bold;
+            color: blue;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>WhatsApp Connection Portal</h1>
+    <p>by CLOUD TECH</p>
+    
+    <input type="text" id="phoneNumber" placeholder="254743982206" pattern="[0-9]{10,15}">
+    <button onclick="getCode()">Get Pairing Code</button>
+    
+    <div id="result" style="display:none;">
+        <div class="code" id="pairingCode"></div>
+        <p>Enter this code in WhatsApp: Settings → Linked Devices → Link a Device</p>
+    </div>
+    
+    <script>
+        async function getCode() {
+            const phoneNumber = document.getElementById('phoneNumber').value;
+            const response = await fetch('/get-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phoneNumber })
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                document.getElementById('pairingCode').textContent = result.code;
+                document.getElementById('result').style.display = 'block';
+            } else {
+                alert('Error: ' + result.error);
+            }
+        }
+    </script>
+</body>
+</html>
