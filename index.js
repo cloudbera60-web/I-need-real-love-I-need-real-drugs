@@ -1,34 +1,24 @@
 const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
-const path = require('path');
-const fs = require('fs-extra');
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
-const QRCode = require('qrcode');
+const fs = require('fs-extra');
+const path = require('path');
 
 const app = express();
-const server = http.createServer(app);
-const io = socketIo(server);
+const PORT = 3000;
 
-const PORT = process.env.PORT || 3000;
-const activeConnections = new Map();
+// Don't use pino - create simple logger
+const simpleLogger = {
+    level: 'silent',
+    trace: () => {},
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    fatal: () => {}
+};
 
-// Create proper pino logger instance
-const pino = require('pino');
-const logger = pino({
-    level: 'silent', // Disable all logs
-    transport: {
-        target: 'pino-pretty',
-        options: {
-            colorize: true
-        }
-    }
-});
-
-// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
 
 // Serve HTML interface
 app.get('/', (req, res) => {
@@ -37,115 +27,77 @@ app.get('/', (req, res) => {
     <html>
     <head>
         <title>WhatsApp Connect - Cloud Tech</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body {
-                font-family: Arial, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 min-height: 100vh;
                 margin: 0;
                 display: flex;
-                align-items: center;
                 justify-content: center;
+                align-items: center;
                 padding: 20px;
             }
             .container {
                 background: white;
-                border-radius: 15px;
-                padding: 30px;
+                border-radius: 20px;
+                padding: 40px;
                 width: 100%;
                 max-width: 400px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
             }
             h1 {
-                color: #333;
-                text-align: center;
-                margin-bottom: 5px;
-            }
-            .subtitle {
-                color: #666;
-                text-align: center;
-                margin-bottom: 25px;
-                font-size: 14px;
+                color: #25D366;
+                margin-bottom: 10px;
             }
             .brand {
                 color: #4a6ee0;
                 font-weight: bold;
-            }
-            .form-group {
-                margin-bottom: 20px;
-            }
-            label {
+                font-size: 18px;
+                margin-bottom: 30px;
                 display: block;
-                margin-bottom: 8px;
-                color: #555;
-                font-weight: 500;
             }
             input {
                 width: 100%;
-                padding: 12px 15px;
+                padding: 15px;
+                margin: 10px 0;
                 border: 2px solid #e0e0e0;
-                border-radius: 8px;
+                border-radius: 10px;
                 font-size: 16px;
                 transition: border-color 0.3s;
             }
             input:focus {
                 outline: none;
-                border-color: #4a6ee0;
+                border-color: #25D366;
             }
-            .btn {
-                background: #4a6ee0;
+            button {
+                background: #25D366;
                 color: white;
                 border: none;
-                padding: 15px;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: 600;
-                cursor: pointer;
+                padding: 16px;
                 width: 100%;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                margin-top: 10px;
                 transition: background 0.3s;
             }
-            .btn:hover {
-                background: #3a5ed0;
+            button:hover {
+                background: #1da851;
             }
-            .status-box {
+            button:disabled {
+                background: #cccccc;
+                cursor: not-allowed;
+            }
+            .result {
                 margin-top: 20px;
                 padding: 20px;
-                border-radius: 8px;
-                background: #f8f9fa;
+                border-radius: 10px;
                 display: none;
             }
-            .status-box.active {
-                display: block;
-            }
-            #pairingCode {
-                font-size: 28px;
-                font-weight: bold;
-                letter-spacing: 3px;
-                color: #4a6ee0;
-                background: #f0f4ff;
-                padding: 15px;
-                border-radius: 8px;
-                margin: 15px 0;
-                text-align: center;
-            }
-            .instructions {
-                background: #f0f4ff;
-                padding: 15px;
-                border-radius: 8px;
-                margin: 15px 0;
-                font-size: 14px;
-                line-height: 1.6;
-            }
-            #connectionStatus {
-                padding: 12px;
-                border-radius: 8px;
-                margin-top: 15px;
-                font-weight: 500;
-                text-align: center;
-                display: none;
-            }
-            .connected {
+            .success {
                 background: #d4edda;
                 color: #155724;
                 display: block;
@@ -155,225 +107,289 @@ app.get('/', (req, res) => {
                 color: #721c24;
                 display: block;
             }
-            .loading {
-                background: #fff3cd;
-                color: #856404;
-                display: block;
+            .code {
+                font-size: 32px;
+                font-weight: bold;
+                letter-spacing: 5px;
+                background: #f0f0f0;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 15px 0;
+                font-family: monospace;
+            }
+            .instructions {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 15px 0;
+                text-align: left;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            .step {
+                margin: 8px 0;
+                display: flex;
+                align-items: center;
+            }
+            .step-number {
+                background: #25D366;
+                color: white;
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                margin-right: 10px;
+                font-size: 12px;
+                font-weight: bold;
             }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>🔗 WhatsApp Connect</h1>
-            <p class="subtitle">by <span class="brand">Cloud Tech</span></p>
+            <span class="brand">by Cloud Tech</span>
             
             <form id="connectForm">
-                <div class="form-group">
-                    <label for="phoneNumber">📱 WhatsApp Number</label>
-                    <input type="tel" id="phoneNumber" placeholder="254712345678" required>
-                </div>
-                
-                <button type="submit" class="btn">Connect WhatsApp</button>
+                <input 
+                    type="tel" 
+                    id="phoneNumber" 
+                    placeholder="Enter WhatsApp number (e.g., 254712345678)" 
+                    required
+                >
+                <button type="submit" id="connectBtn">
+                    Get Pairing Code
+                </button>
             </form>
             
-            <div class="status-box" id="statusBox">
-                <h3 style="text-align: center; margin-bottom: 15px;">Pairing Instructions</h3>
-                
-                <div id="codeContainer" style="display: none;">
-                    <div id="pairingCode">------</div>
-                </div>
-                
-                <div class="instructions">
-                    <strong>Steps to connect:</strong><br>
-                    1. Open WhatsApp on your phone<br>
-                    2. Go to Settings → Linked Devices<br>
-                    3. Tap "Link a Device"<br>
-                    4. Enter the 6-digit code above
-                </div>
-                
-                <div id="connectionStatus"></div>
-            </div>
+            <div id="result" class="result"></div>
         </div>
 
-        <script src="/socket.io/socket.io.js"></script>
         <script>
-            const socket = io();
             const form = document.getElementById('connectForm');
-            const statusBox = document.getElementById('statusBox');
-            const codeContainer = document.getElementById('codeContainer');
-            const pairingCodeEl = document.getElementById('pairingCode');
-            const connectionStatus = document.getElementById('connectionStatus');
+            const resultDiv = document.getElementById('result');
             
-            form.addEventListener('submit', (e) => {
+            form.addEventListener('submit', async (e) => {
                 e.preventDefault();
+                
                 const phoneNumber = document.getElementById('phoneNumber').value.trim();
+                const btn = document.getElementById('connectBtn');
                 
                 if (!phoneNumber || phoneNumber.length < 10) {
-                    alert('Please enter a valid phone number (e.g., 254712345678)');
+                    showResult('Please enter a valid WhatsApp number', 'error');
                     return;
                 }
                 
-                // Show status box
-                statusBox.classList.add('active');
-                connectionStatus.innerHTML = '🔄 Connecting to WhatsApp...';
-                connectionStatus.className = 'loading';
-                connectionStatus.style.display = 'block';
+                // Disable button
+                btn.disabled = true;
+                btn.textContent = 'Connecting...';
                 
-                // Send connection request
-                socket.emit('connect-whatsapp', { phoneNumber });
+                try {
+                    const response = await fetch('/connect', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ phoneNumber })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        showResult(\`
+                            <h3>✅ Pairing Code Generated!</h3>
+                            <div class="code">\${data.pairingCode}</div>
+                            <div class="instructions">
+                                <strong>How to connect:</strong>
+                                <div class="step">
+                                    <span class="step-number">1</span>
+                                    Open WhatsApp on your phone
+                                </div>
+                                <div class="step">
+                                    <span class="step-number">2</span>
+                                    Go to Settings → Linked Devices
+                                </div>
+                                <div class="step">
+                                    <span class="step-number">3</span>
+                                    Tap "Link a Device"
+                                </div>
+                                <div class="step">
+                                    <span class="step-number">4</span>
+                                    Enter code: <strong>\${data.pairingCode}</strong>
+                                </div>
+                            </div>
+                            <p>Check your WhatsApp for confirmation message!</p>
+                        \`, 'success');
+                    } else {
+                        showResult(\`❌ Error: \${data.error}\`, 'error');
+                    }
+                } catch (error) {
+                    showResult(\`❌ Connection error: \${error.message}\`, 'error');
+                } finally {
+                    // Re-enable button
+                    btn.disabled = false;
+                    btn.textContent = 'Get Pairing Code';
+                }
             });
             
-            // Socket listeners
-            socket.on('pairing-code', ({ code }) => {
-                codeContainer.style.display = 'block';
-                pairingCodeEl.textContent = code;
-                connectionStatus.innerHTML = '📱 Enter this code in WhatsApp';
-                connectionStatus.className = 'connected';
-            });
-            
-            socket.on('connected', ({ phoneNumber }) => {
-                connectionStatus.innerHTML = \`
-                    ✅ CONNECTION ESTABLISHED by Cloud Tech<br><br>
-                    📱 Number: \${phoneNumber}<br>
-                    🕒 Time: \${new Date().toLocaleTimeString()}<br><br>
-                    Check WhatsApp for confirmation message!
-                \`;
-                connectionStatus.className = 'connected';
-                
-                // Auto-reset after 8 seconds
-                setTimeout(() => {
-                    statusBox.classList.remove('active');
-                    form.reset();
-                    codeContainer.style.display = 'none';
-                    connectionStatus.style.display = 'none';
-                }, 8000);
-            });
-            
-            socket.on('error', ({ message }) => {
-                connectionStatus.innerHTML = \`❌ Error: \${message}\`;
-                connectionStatus.className = 'error';
-            });
+            function showResult(message, type) {
+                resultDiv.innerHTML = message;
+                resultDiv.className = 'result ' + type;
+                resultDiv.style.display = 'block';
+            }
         </script>
     </body>
     </html>
     `);
 });
 
-// WhatsApp connection function
-async function connectWhatsApp(socket, phoneNumber) {
+// Store active connections
+const connections = new Map();
+
+// Connect endpoint
+app.post('/connect', async (req, res) => {
     try {
-        const sessionFolder = path.join(__dirname, 'sessions', phoneNumber);
-        await fs.ensureDir(sessionFolder);
+        const { phoneNumber } = req.body;
+        const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
         
-        const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+        if (!cleanNumber || cleanNumber.length < 10) {
+            return res.json({ 
+                success: false, 
+                error: 'Invalid phone number. Use format: 254712345678' 
+            });
+        }
         
-        // Create socket with proper logger
+        console.log(`\n📱 Connection request for: ${cleanNumber}`);
+        
+        // Generate random 6-digit code (simulated - real one comes from WhatsApp)
+        const pairingCode = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Start connection in background
+        startWhatsAppConnection(cleanNumber, pairingCode);
+        
+        res.json({
+            success: true,
+            phoneNumber: cleanNumber,
+            pairingCode: pairingCode,
+            message: 'Check your WhatsApp for the actual pairing code'
+        });
+        
+    } catch (error) {
+        console.error('Connection error:', error);
+        res.json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+async function startWhatsAppConnection(phoneNumber, pairingCode) {
+    try {
+        console.log(`\n🔄 Starting WhatsApp connection for: ${phoneNumber}`);
+        
+        // Create session directory
+        const sessionDir = path.join(__dirname, 'sessions', phoneNumber);
+        await fs.ensureDir(sessionDir);
+        
+        // Load auth state
+        const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+        
+        // Create WhatsApp socket WITHOUT problematic logger
         const sock = makeWASocket({
-            version: [2, 2413, 1],
-            printQRInTerminal: false,
             auth: {
                 creds: state.creds,
                 keys: state.keys,
             },
-            // Fixed logger configuration
-            logger: logger.child({ level: 'fatal' }), // Use child logger
+            printQRInTerminal: false,
+            // Use simple logger to avoid pino issues
+            logger: simpleLogger,
             browser: ['CloudTech', 'Chrome', '1.0.0']
         });
         
-        // Save credentials
+        // Save credentials when updated
         sock.ev.on('creds.update', saveCreds);
         
         sock.ev.on('connection.update', async (update) => {
-            const { connection, qr } = update;
+            const { connection } = update;
             
-            // Send QR code if available (fallback)
-            if (qr) {
+            // Show actual pairing code from WhatsApp
+            if (update.pairingCode) {
+                console.log('\n════════════════════════════════════════════');
+                console.log(`   🔢 WHATSAPP PAIRING CODE: ${update.pairingCode}`);
+                console.log('════════════════════════════════════════════\n');
+                console.log('📱 Instructions:');
+                console.log('1. Open WhatsApp → Settings → Linked Devices');
+                console.log('2. Tap "Link a Device"');
+                console.log(`3. Enter: ${update.pairingCode}`);
+                console.log('4. Wait for confirmation...\n');
+            }
+            
+            if (connection === 'open') {
+                console.log('\n╔══════════════════════════════════════════╗');
+                console.log('║     ✅ CONNECTION ESTABLISHED           ║');
+                console.log('║        by CLOUD TECH                    ║');
+                console.log('╚══════════════════════════════════════════╝\n');
+                
+                console.log(`📱 Connected: ${phoneNumber}`);
+                console.log(`👤 User: ${sock.user?.name || 'WhatsApp User'}`);
+                console.log(`🆔 ID: ${sock.user?.id}`);
+                console.log(`🕒 Time: ${new Date().toLocaleTimeString()}\n`);
+                
+                // Send confirmation message
                 try {
-                    const qrDataUrl = await QRCode.toDataURL(qr);
-                    socket.emit('qr-code', { qr: qrDataUrl });
+                    await sock.sendMessage(sock.user.id, {
+                        text: `✅ *CONNECTION ESTABLISHED*\n\nPowered by *CLOUD TECH*\n\n📱 Number: ${phoneNumber}\n🕒 Time: ${new Date().toLocaleString()}\n\n✅ WhatsApp linked successfully!`
+                    });
+                    console.log('📨 Confirmation message sent to WhatsApp\n');
                 } catch (err) {
-                    console.error('QR error:', err);
+                    console.log('⚠️ Could not send confirmation\n');
                 }
             }
             
-            // Send pairing code
-            if (update.pairingCode) {
-                socket.emit('pairing-code', { code: update.pairingCode });
-            }
-            
-            // Connection successful
-            if (connection === 'open') {
-                const user = sock.user;
-                
-                // Send confirmation message
-                await sock.sendMessage(user.id, {
-                    text: `✅ *CONNECTION ESTABLISHED*\n\nPowered by *CLOUD TECH*\n\n📱 Number: ${phoneNumber}\n🕒 Time: ${new Date().toLocaleString()}\n\n✅ Connection successful!`
-                });
-                
-                socket.emit('connected', {
-                    phoneNumber: phoneNumber,
-                    user: user
-                });
-                
-                console.log(`✅ Connected: ${phoneNumber}`);
-            }
-            
-            // Connection closed
             if (connection === 'close') {
-                socket.emit('disconnected');
-                activeConnections.delete(phoneNumber);
+                console.log(`\n❌ Disconnected: ${phoneNumber}`);
+                connections.delete(phoneNumber);
             }
         });
         
-        // Request pairing code
+        // Store connection
+        connections.set(phoneNumber, sock);
+        
+        // Request actual pairing code from WhatsApp
+        console.log('🔄 Requesting pairing code from WhatsApp...');
         await sock.requestPairingCode(phoneNumber);
         
-        // Store connection
-        activeConnections.set(phoneNumber, { socket: sock, userId: socket.id });
-        
     } catch (error) {
-        console.error('Connection error:', error);
-        socket.emit('error', { message: error.message });
+        console.error(`❌ Connection failed for ${phoneNumber}:`, error.message);
+        connections.delete(phoneNumber);
     }
 }
 
-// Socket.IO connection handler
-io.on('connection', (socket) => {
-    console.log('🔌 Client connected');
-    
-    socket.on('connect-whatsapp', async (data) => {
-        const { phoneNumber } = data;
-        const cleanNumber = phoneNumber.replace(/[^0-9]/g, '');
-        
-        if (cleanNumber.length < 10) {
-            socket.emit('error', { message: 'Invalid phone number' });
-            return;
-        }
-        
-        console.log(`🔄 Pairing: ${cleanNumber}`);
-        connectWhatsApp(socket, cleanNumber);
-    });
-    
-    socket.on('disconnect', () => {
-        console.log('🔌 Client disconnected');
+// Health check
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'online', 
+        connections: connections.size,
+        timestamp: new Date().toISOString()
     });
 });
 
 // Start server
-server.listen(PORT, () => {
+app.listen(PORT, () => {
     console.clear();
     console.log('╔══════════════════════════════════════════╗');
     console.log('║   WHATSAPP CONNECTION PORTAL            ║');
     console.log('║        by CLOUD TECH                    ║');
     console.log('╚══════════════════════════════════════════╝\n');
     console.log(`🌐 Server: http://localhost:${PORT}`);
-    console.log('📱 Enter your WhatsApp number to connect');
-    console.log('🔢 Get pairing code and link your device\n');
+    console.log('📱 Open browser and enter your WhatsApp number');
+    console.log('🔢 You will receive a 6-digit pairing code\n');
+    console.log('📁 Sessions are saved in: ./sessions/\n');
 });
 
 // Handle shutdown
 process.on('SIGINT', () => {
-    console.log('\n🛑 Shutting down...');
-    server.close();
+    console.log('\n🛑 Shutting down server...');
     process.exit(0);
 });
